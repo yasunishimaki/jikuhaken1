@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>自己分析フォーム</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#f6f7fb; --card:#ffffff; --text:#222; --muted:#6b7280; --line:#e5e7eb; }
+    *{box-sizing:border-box}
+    body{margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+    .wrap{max-width:980px; margin:32px auto; padding:0 16px}
+    h1{font-size:1.6rem; margin:0 0 12px}
+    .desc{color:var(--muted); margin-bottom:16px}
+    .tabs{display:flex; gap:12px; margin-bottom:12px}
+    .tab{display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; cursor:pointer}
+    .tab input{margin:0}
+    .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.03); margin:12px 0}
+    .row{margin:10px 0}
+    textarea{width:100%; min-height:96px; padding:10px; border-radius:10px; border:1px solid var(--line)}
+    button{padding:10px 16px; border-radius:10px; border:1px solid var(--line); background:#0ea5e9; color:#fff; cursor:pointer}
+    button:disabled{opacity:.6; cursor:not-allowed}
+    .hidden{display:none}
+    .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px}
+    .badge{display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px; background:#fafafa; color:#333; font-size:.85rem; margin-right:6px}
+    .list{padding-left:18px; margin:6px 0}
+    .list li{margin:4px 0}
+    .muted{color:var(--muted)}
+    .section-title{font-weight:600; margin:8px 0 4px}
+  </style>
+
+  <script>
+    function qs(sel){ return document.querySelector(sel) }
+    function show(id, on){ qs('#'+id).classList.toggle('hidden', !on) }
+
+    function toggleMode(){
+      const checked = document.querySelector('input[name="mode"]:checked')
+      const mode = checked ? checked.value : 'uploads'
+      show('questions', mode === 'questions')
+      show('uploads',   mode === 'uploads')
+      qs('#result').innerHTML = ''
+    }
+
+    async function submitQuestions(e){
+      e.preventDefault()
+      const btn = qs('#btn-q'); btn.disabled = true
+      try{
+        const q1 = qs('#q1').value.trim()
+        const q2 = qs('#q2').value.trim()
+        const res = await fetch('/analyze-text', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ q1, q2 })
+        })
+        if(!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        qs('#result').innerHTML = render(data)
+      }catch(err){
+        qs('#result').innerHTML = `<div class="card">エラー: ${String(err)}</div>`
+      }finally{
+        btn.disabled = false
+      }
+    }
+
+    async function submitUploads(e){
+      e.preventDefault()
+      const btn = qs('#btn-u'); btn.disabled = true
+      try{
+        const files = qs('#file-input').files
+        if(!files || files.length === 0) throw new Error('ファイルを選択してください')
+
+        const fd = new FormData()
+        for(const f of files) fd.append('file', f)
+
+        const res = await fetch('/analyze-uploads', { method:'POST', body: fd })
+        if(!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+
+        // ここで data を使って見える化
+        const list = (data.uploaded || []).join(', ')
+        const status = (data.ocr_status || []).join(', ')
+        const sources = (data.sources || []).map(s => `${s.type}:${s.chars}chars`).join(' / ')
+        const preview = data.text_preview
+          ? `<div class="row"><span class="muted">抽出プレビュー</span><div class="card" style="background:#f9fafb">${data.text_preview}</div></div>`
+          : ''
+
+        const top = `<div class="card">
+          <div class="section-title">アップロード完了</div>
+          <div>${list}</div>
+          ${status ? `<div class="muted">OCRステータス: ${status}</div>` : ''}
+          ${sources ? `<div class="muted">抽出ソース: ${sources}</div>` : ''}
+          ${preview}
+        </div>`
+
+        const analysis = data.analysis || {}
+        qs('#result').innerHTML = top + render(analysis)
+      }catch(err){
+        qs('#result').innerHTML = `<div class="card">エラー: ${String(err)}</div>`
+      }finally{
+        btn.disabled = false
+      }
+    }
+
+    function render(data){
+      const s = data.summary || {}
+      const recs = data.recommendations || []
+      const combos = data.combination_suggestions || []
+
+      let html = ''
+      html += `<div class="card">
+        <div class="section-title">傾向サマリー</div>
+        <div class="row">${(s.dominant_themes||[]).map(x=>`<span class="badge">${x}</span>`).join(' ') || '（未検出）'}</div>
+        <div class="muted">${s.work_style || ''}</div>
+        ${(s.reflection_questions||[]).length
+            ? `<div class="section-title">内省の問い</div><ul class="list">${s.reflection_questions.map(q=>`<li>${q}</li>`).join('')}</ul>`
+            : '' }
+      </div>`
+
+      if(recs.length){
+        html += `<div class="grid">` +
+          recs.map(r => `<div class="card">
+            <div class="section-title">${r.industry}</div>
+            <div class="row"><span class="muted">推奨職種</span><br>${(r.roles||[]).join(' / ')}</div>
+            <div class="row"><span class="muted">理由</span><br>${r.reason || ''}</div>
+            ${r.evidence_keywords?.length ? `<div class="row">${r.evidence_keywords.map(k=>`<span class="badge">${k}</span>`).join(' ')}</div>` : ''}
+            ${r.typical_tasks?.length ? `<div class="row"><span class="muted">想定業務</span><ul class="list">${r.typical_tasks.map(t=>`<li>${t}</li>`).join('')}</ul></div>` : ''}
+            ${r.adjacent_fields?.length ? `<div class="row"><span class="muted">隣接フィールド</span><br>${r.adjacent_fields.join(' / ')}</div>` : ''}
+            ${r.first_steps?.length ? `<div class="row"><span class="muted">最初の一歩</span><ul class="list">${r.first_steps.map(t=>`<li>${t}</li>`).join('')}</ul></div>` : ''}
+          </div>`).join('') + `</div>`
+      }
+
+      if(combos.length){
+        html += `<div class="card">
+          <div class="section-title">掛け算の提案</div>
+          <ul class="list">${combos.map(c=>`<li>${c.label}：${(c.roles||[]).join(' / ')}<br><span class="muted">${c.why || ''}</span></li>`).join('')}</ul>
+        </div>`
+      }
+      return html
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const up = qs('input[name="mode"][value="uploads"]')
+      if(up) up.checked = true
+      toggleMode()
+    })
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>自己分析フォーム</h1>
+    <div class="desc">強み（できること）と興味（やりたいこと）から、業界・職種の候補と理由を提示します。説明は気づきが得られるように要点を整理して表示します。</div>
+
+    <div class="tabs">
+      <label class="tab"><input type="radio" name="mode" value="questions" onchange="toggleMode()"> 質問に答える</label>
+      <label class="tab"><input type="radio" name="mode" value="uploads" onchange="toggleMode()"> 成果物をアップロード</label>
+    </div>
+
+    <form id="questions" class="card hidden" onsubmit="submitQuestions(event)">
+      <div class="row"><label>強み（得意・よく褒められること）<br>
+        <textarea id="q1" placeholder="例：GASやPythonで業務を自動化。資料をわかりやすく整えるのが得意。"></textarea></label></div>
+      <div class="row"><label>興味（やってみたいこと・関心領域）<br>
+        <textarea id="q2" placeholder="例：後輩支援やイベントの企画。子ども食堂ボラティアにも関心。"></textarea></label></div>
+      <button id="btn-q" type="submit">分析する</button>
+    </form>
+
+    <form id="uploads" class="card hidden" onsubmit="submitUploads(event)">
+      <div class="row"><input id="file-input" type="file" multiple accept=".jpg,.jpeg,.png,.pdf"></div>
+      <button id="btn-u" type="submit">アップロードして分析</button>
+    </form>
+
+    <div id="result"></div>
+  </div>
+</body>
+</html>
